@@ -1,0 +1,70 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: bigdataspark-postgres
+    environment:
+      POSTGRES_DB: petshop
+      POSTGRES_USER: petshop
+      POSTGRES_PASSWORD: petshop
+    ports:
+      - "5434:5432"
+    volumes:
+      - ./sql:/sql:ro
+      - ./исходные данные:/data/csv:ro
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U petshop -d petshop"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    container_name: bigdataspark-clickhouse
+    environment:
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_DB: petshop
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - ./docker/clickhouse/init:/docker-entrypoint-initdb.d
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  spark:
+    build:
+      context: ./docker/spark
+    image: bigdataspark-spark:3.5.3
+    container_name: bigdataspark-spark
+    user: root
+    working_dir: /opt/spark/work-dir
+    environment:
+      PG_HOST: postgres
+      PG_PORT: "5432"
+      PG_DB: petshop
+      PG_USER: petshop
+      PG_PASSWORD: petshop
+      CH_HOST: clickhouse
+      CH_PORT: "8123"
+      CH_DB: petshop
+      CH_USER: default
+      CH_PASSWORD: clickhouse
+      SPARK_NO_DAEMONIZE: "true"
+    volumes:
+      - ./spark:/opt/spark/work-dir/spark
+      - ./scripts:/scripts:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "/scripts/run_spark_jobs.sh"]
